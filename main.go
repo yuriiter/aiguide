@@ -256,7 +256,7 @@ func callAI(userPrompt, sysPrompt string) (string, error) {
 	}
 
 	client := &http.Client{Timeout: 120 * time.Second}
-	req, err := http.NewRequest("POST", cfg.BaseURL+"chat/completions", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequest("POST", cfg.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return "", err
 	}
