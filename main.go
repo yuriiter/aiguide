@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -21,16 +22,17 @@ import (
 var embedSystemPrompt string
 
 type Config struct {
-	BaseURL      string
-	Token        string
-	Model        string
-	Subject      string
-	TotalCount   int
-	ChunkSize    int
-	Stdout       bool
-	Threads      int
-	Info         string
-	SystemPrompt string
+	BaseURL          string
+	Token            string
+	Model            string
+	Subject          string
+	TotalCount       int
+	ChunkSize        int
+	Stdout           bool
+	Threads          int
+	Info             string
+	SystemPromptPath string
+	SystemPrompt     string
 }
 
 var cfg Config
@@ -64,10 +66,11 @@ func main() {
 	}
 
 	rootCmd.Flags().IntVarP(&cfg.TotalCount, "number", "n", 100, "Total number of questions/concepts to generate")
-	rootCmd.Flags().IntVarP(&cfg.ChunkSize, "chunk", "c", 10, "Number of questions to process per API call")
+	rootCmd.Flags().IntVarP(&cfg.ChunkSize, "chunk", "c", 2, "Number of questions to process per API call")
 	rootCmd.Flags().BoolVarP(&cfg.Stdout, "stdout", "o", false, "Output to stdout instead of file")
 	rootCmd.Flags().IntVarP(&cfg.Threads, "threads", "t", 1, "Number of concurrent threads for generating answers")
 	rootCmd.Flags().StringVarP(&cfg.Info, "info", "i", "", "Additional instructions or context to append to system prompt")
+	rootCmd.Flags().StringVarP(&cfg.SystemPromptPath, "system-prompt", "s", "", "Path to custom system prompt file")
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
@@ -79,7 +82,17 @@ func run(cmd *cobra.Command, args []string) {
 	cfg.Subject = args[0]
 	loadEnv()
 
-	cfg.SystemPrompt = embedSystemPrompt
+	if cfg.SystemPromptPath != "" {
+		b, err := os.ReadFile(cfg.SystemPromptPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading system prompt file: %v\n", err)
+			os.Exit(1)
+		}
+		cfg.SystemPrompt = string(b)
+	} else {
+		cfg.SystemPrompt = embedSystemPrompt
+	}
+
 	if cfg.Info != "" {
 		cfg.SystemPrompt += "\n\nADDITIONAL USER INSTRUCTIONS:\n" + cfg.Info
 	}
@@ -121,11 +134,20 @@ func run(cmd *cobra.Command, args []string) {
 		fmt.Println("\n-> Done! Guide generated successfully.")
 	}
 }
+
 func loadEnv() {
-	cfg.BaseURL = os.Getenv("OPENAI_BASE_URL")
-	if cfg.BaseURL == "" {
-		cfg.BaseURL = "https://api.openai.com/v1"
+	rawURL := os.Getenv("OPENAI_BASE_URL")
+	if rawURL == "" {
+		rawURL = "https://api.openai.com/v1"
 	}
+
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error parsing Base URL: %v\n", err)
+		os.Exit(1)
+	}
+	cfg.BaseURL = u.JoinPath("chat", "completions").String()
+
 	cfg.Token = os.Getenv("OPENAI_API_KEY")
 	if cfg.Token == "" {
 		fmt.Fprintln(os.Stderr, "Error: OPENAI_API_KEY environment variable is required.")
@@ -140,7 +162,8 @@ func loadEnv() {
 func generateConceptList() ([]string, error) {
 	prompt := fmt.Sprintf(
 		"Generate a numbered list of exactly %d core questions or concepts regarding the subject: '%s'. "+
-			"Output ONLY the numbered list. Do not add introductions or conclusions.",
+			"Output ONLY the numbered list. Do not add introductions or conclusions. "+
+			"Ensure every line starts with a number followed by a dot.",
 		cfg.TotalCount, cfg.Subject,
 	)
 
@@ -173,11 +196,16 @@ func writeHeaderAndToC(w io.Writer, concepts []string) {
 		if len(parts) < 2 {
 			continue
 		}
-		linkRef := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(c, " ", "-"), ".", ""))
-		reg := regexp.MustCompile("[^a-z0-9-]+")
-		linkRef = reg.ReplaceAllString(linkRef, "")
 
-		toc += fmt.Sprintf("- [%s](#%s)\n", c, linkRef)
+		content := strings.ToLower(parts[1])
+		reg := regexp.MustCompile("[^a-z0-9 ]+")
+		content = reg.ReplaceAllString(content, "")
+		slug := strings.ReplaceAll(strings.TrimSpace(content), " ", "-")
+
+		numberStr := strings.TrimSuffix(parts[0], ".")
+		fullSlug := fmt.Sprintf("%s-%s", numberStr, slug)
+
+		toc += fmt.Sprintf("- [%s](#%s)\n", c, fullSlug)
 	}
 	toc += "\n---\n\n"
 
@@ -187,57 +215,77 @@ func writeHeaderAndToC(w io.Writer, concepts []string) {
 
 func processChunks(w io.Writer, concepts []string) {
 	total := len(concepts)
-	var wg sync.WaitGroup
+	numChunks := (total + cfg.ChunkSize - 1) / cfg.ChunkSize
+	results := make([]string, numChunks)
 
 	type job struct {
-		index int
-		items []string
+		chunkID int
+		items   []string
 	}
-	jobs := make(chan job, total/cfg.ChunkSize+1)
 
-	var writeMutex sync.Mutex
+	jobs := make(chan job, numChunks)
+	var wg sync.WaitGroup
+	var resultMu sync.Mutex
 
 	for i := 0; i < cfg.Threads; i++ {
 		wg.Add(1)
 		go func(workerID int) {
 			defer wg.Done()
 			for j := range jobs {
+				startIdx := j.chunkID * cfg.ChunkSize
+				endIdx := startIdx + len(j.items)
+
 				if !cfg.Stdout {
-					fmt.Printf("   [Worker %d] Processing chunk %d-%d...\n", workerID, j.index+1, j.index+len(j.items))
+					fmt.Printf("   [Worker %d] Processing chunk %d (Items %d-%d)...\n", workerID, j.chunkID+1, startIdx+1, endIdx)
 				}
 
 				chunkText := strings.Join(j.items, "\n")
 				prompt := fmt.Sprintf(
 					"Here is a list of concepts/questions:\n%s\n\n"+
 						"Provide a detailed, numbered explanation for EACH one based on the system prompt instructions. "+
-						"Maintain the original numbering.",
+						"Maintain the original numbering exactly.",
 					chunkText,
 				)
 
 				content, err := callAI(prompt, cfg.SystemPrompt)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error processing chunk starting at %d: %v\n", j.index, err)
-					continue
+					fmt.Fprintf(os.Stderr, "Error processing chunk %d: %v\n", j.chunkID, err)
+					content = fmt.Sprintf("## Error generating section %d-%d\n\nAPI Error: %v", startIdx+1, endIdx, err)
 				}
 
-				writeMutex.Lock()
-				fmt.Fprintln(w, content)
-				fmt.Fprintln(w, "\n---")
-				writeMutex.Unlock()
+				content = strings.TrimSpace(content)
+				content = strings.TrimPrefix(content, "```markdown")
+				content = strings.TrimPrefix(content, "```")
+				content = strings.TrimSuffix(content, "```")
+
+				resultMu.Lock()
+				results[j.chunkID] = content
+				resultMu.Unlock()
 			}
 		}(i)
 	}
 
-	for i := 0; i < total; i += cfg.ChunkSize {
-		end := i + cfg.ChunkSize
+	for i := 0; i < numChunks; i++ {
+		start := i * cfg.ChunkSize
+		end := start + cfg.ChunkSize
 		if end > total {
 			end = total
 		}
-		jobs <- job{index: i, items: concepts[i:end]}
+		jobs <- job{
+			chunkID: i,
+			items:   concepts[start:end],
+		}
 	}
 	close(jobs)
 
 	wg.Wait()
+
+	for _, content := range results {
+		if content != "" {
+			fmt.Fprintln(w, content)
+			fmt.Fprintln(w, "\n---")
+		}
+	}
 }
 
 func callAI(userPrompt, sysPrompt string) (string, error) {
@@ -256,7 +304,7 @@ func callAI(userPrompt, sysPrompt string) (string, error) {
 	}
 
 	client := &http.Client{Timeout: 120 * time.Second}
-	req, err := http.NewRequest("POST", cfg.BaseURL+"/chat/completions", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequest("POST", cfg.BaseURL, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return "", err
 	}

@@ -1,74 +1,98 @@
 # aiguide 📖
 
-`aiguide` is a Go-based command-line tool designed to help you master any subject. By leveraging LLMs (OpenAI, Anthropic, or local via Ollama), it automates the process of creating a structured study manual. 
+> **Master any subject with AI-generated, structured study guides.**
 
-It works in two stages:
-1. **Concept Mapping**: It generates a numbered list of core concepts or questions for your chosen subject.
-2. **Knowledge Deep-Dive**: It processes those concepts in chunks to generate detailed explanations, outputting a fully formatted Markdown file with a Table of Contents.
+`aiguide` is a CLI tool written in Go that acts as your personal curriculum developer. It leverages LLMs (OpenAI, Anthropic, Ollama, etc.) to generate comprehensive, academic-grade study manuals. It breaks complex subjects into core concepts, creates a roadmap, and generates deep-dive explanations with diagrams and code examples.
 
-## Features
+## ✨ Features
 
-- ⚡ **Concurrent Processing**: Uses Go routines to generate answers in parallel.
-- 📂 **Markdown Output**: Generates clean, readable `.md` files with a clickable Table of Contents.
-- 🔧 **Highly Configurable**: Control the number of questions, chunk sizes, and thread counts.
-- 🧠 **Custom Instructions**: Inject additional context or specific learning styles via the `--info` flag.
-- 🔗 **API Compatible**: Works with OpenAI or any OpenAI-compatible API (like DeepSeek, Groq, or Ollama).
+- **🚀 Parallel Generation**: Utilizes concurrent workers to generate content fast without losing order.
+- **📑 Structured Output**: Produces a single, cohesive Markdown file with a working Table of Contents.
+- **🧠 Deep Dives**: optimized for depth—defaults to small chunks to allow the AI to generate long, detailed explanations.
+- **🎨 Visuals & Code**: Automatically requests **Mermaid.js** diagrams for workflows and code snippets for technical concepts.
+- **🔧 Custom Prompts**: Bring your own system prompt or inject specific context via CLI flags.
+- **🔌 Universal API Support**: Works with OpenAI or any compatible endpoint (LocalAI, Ollama, DeepSeek, etc.).
 
-## Installation
+## 📦 Installation
 
 ```bash
 go install github.com/yuriiter/aiguide@latest
 ```
 
-## Setup
+## ⚙️ Configuration
 
-Set your environment variables:
+Set your environment variables. Only the API Key is strictly required; others have sensible defaults.
 
 ```bash
-export OPENAI_API_KEY="your-api-key"
-# Optional overrides:
+# Required
+export OPENAI_API_KEY="sk-..."
+
+# Optional (Defaults shown)
 export OPENAI_BASE_URL="https://api.openai.com/v1"
 export OPENAI_MODEL="gpt-4o"
 ```
 
-## Usage
+## 🚀 Usage
 
-Generate a guide by simply providing a subject:
+### Basic Usage
+Generate a standard guide (100 concepts) for a subject:
 
 ```bash
-aiguide "Quantum Computing"
+aiguide "Quantum Physics"
 ```
 
-### Advanced Examples
+### Advanced Usage
 
-**Generate a deep-dive guide with 50 concepts using 5 parallel threads:**
+**1. faster generation with threads:**
+Use 5 concurrent threads to speed up the process.
 ```bash
-aiguide "Rust Programming" -n 50 -t 5
+aiguide "System Design" -t 5
 ```
 
-**Tailor the guide for a specific audience (e.g., a beginner):**
+**2. Customizing the depth:**
+Generate only 20 key concepts, but keep the chunk size small (2) for maximum detail per answer.
 ```bash
-aiguide "Organic Chemistry" --info "Explain things as if I am a high school student with no prior knowledge."
+aiguide "Kubernetes Networking" -n 20 -c 2
 ```
 
-**Output directly to the terminal:**
+**3. Custom Persona/Prompt:**
+Point to a custom system prompt file (e.g., to generate content in a specific language or tone).
 ```bash
-aiguide "French Revolution" --stdout
+aiguide "French History" --system-prompt ./prompts/french_tutor.txt
 ```
 
-## Options
+**4. Ad-hoc Instructions:**
+Add specific constraints without changing the file.
+```bash
+aiguide "React Hooks" -i "Focus heavily on performance pitfalls and rendering cycles."
+```
 
-| Flag | Shorthand | Description | Default |
-|------|-----------|-------------|---------|
-| `--number` | `-n` | Total number of concepts to generate | 100 |
-| `--chunk` | `-c` | Concepts per AI request | 10 |
-| `--threads` | `-t` | Number of concurrent workers | 1 |
-| `--info` | `-i` | Additional context for the AI | "" |
-| `--stdout` | `-o` | Output to console instead of file | false |
+## 🚩 Options / Flags
 
-## How it works
+| Flag | Short | Default | Description |
+|------|-------|:-------:|-------------|
+| `--number` | `-n` | `100` | Total number of concepts/questions to generate. |
+| `--chunk` | `-c` | `2` | Number of items to process per API call. Lower = more detail. |
+| `--threads` | `-t` | `1` | Number of concurrent API workers. |
+| `--stdout` | `-o` | `false` | Print to console instead of writing to a file. |
+| `--info` | `-i` | `""` | Append extra instructions to the system prompt. |
+| `--system-prompt`| `-s` | `(embedded)`| Path to a custom system prompt text file. |
 
-1. **Phase 1**: The tool asks the AI to create a curriculum/list based on your subject.
-2. **Phase 2**: It generates a Table of Contents with internal anchors.
-3. **Phase 3**: It splits the list into "chunks" and sends them to the AI to write detailed explanations.
-4. **Phase 4**: Everything is compiled into a single timestamped Markdown file.
+## 🛠️ How it Works
+
+1. **Curriculum Generation**: The tool asks the AI to list exactly `N` core concepts regarding your subject.
+2. **Structure & ToC**: It parses this list and pre-calculates a Table of Contents with valid Markdown anchors.
+3. **Parallel Processing**: 
+   - The list is split into chunks (default size: 2).
+   - Worker threads send these chunks to the API.
+   - Results are buffered in memory to ensure the **final output remains strictly ordered**, regardless of which thread finishes first.
+4. **Cleanup**: It strips Markdown artifacts (like fencing) and compiles the final `.md` file.
+
+## 🤝 Contributing
+
+Pull requests are welcome! Please ensure you respect the formatting logic for the Table of Contents.
+
+## 📄 License
+
+MIT
+
