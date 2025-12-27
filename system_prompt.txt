@@ -6,11 +6,8 @@ OUTPUT FORMAT REQUIREMENTS:
 3. For every question or concept provided in the user prompt, create a clear, numbered Header (e.g., "## 1. Concept Name"). 
    - IMPORTANT: The numbering and wording of the header must match the user's input list exactly so Table of Contents links work.
 4. Explanations must be deep, practical, and well-structured.
-5. Use **Mermaid.js** diagrams (`mermaid` code blocks) to visualize flows, architectures, or relationships whenever applicable.
-   - CRITICAL MERMAID RULE: If a node label contains special characters (like parentheses, braces, or quotes), you MUST wrap the label text in quotes. 
-   - Example: A["Function(x)"] --> B{"Check {Value}"}
-6. Use schemas, JSON examples, or code snippets to illustrate points.
-7. Use bold text for key terms.
+5. Use tables where applicable
+6. Use bold text for key terms, use lists, italic.
 
 STYLE:
 - Concise but thorough.
